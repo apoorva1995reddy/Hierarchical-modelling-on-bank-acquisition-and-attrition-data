@@ -1,0 +1,256 @@
+---
+title: "Bank Acquisition and Attrition models"
+author: "Apoorva_Reddy_Adavalli"
+date: "24 March 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+Trying to find answers for the following questions:
+Do demographics, such as age and income influence acquisition probability?
+Are people who have taken loans before more likely to open a new account?
+Do geographical variables and market shares matter?
+
+## Prediction- To predict probability/likelihood to acquire a customer 
+
+##Binomial models - Logit and Probit 
+
+```{r cars}
+bac=read.csv("D:/UT_Austin/Spring/marketing/Bank/Bank_customer_acquisition.csv",header=T)
+head(bac)
+```
+
+Implementing logistic regression (using logit and probit links in glm)
+```{r}
+bac.glm1= glm (Acquisition~Age+Income+HomeVal+LoanInd+Dist2Bank+MktShare, data=bac, family=binomial(link="logit"))
+bac.glm2 = glm(Acquisition~Age+Income+HomeVal+LoanInd+Dist2Bank+MktShare, data=bac, family=binomial(link="probit"))
+```
+Model comparision between logit and probit of binomial family of models implemented above
+```{r}
+AIC(bac.glm1)
+BIC(bac.glm1)
+AIC(bac.glm2)
+BIC(bac.glm2)
+```
+Very similar performance can be noticed.
+
+```{r}
+bac.pred1 = predict(bac.glm1, type="response")
+cat(" Correlation between predicted and actual in case of logit link:", cor(bac$Acquisition, bac.pred1))
+```
+
+```{r}
+bac.pred2 = predict(bac.glm2, type="response")
+cat(" Correlation between predicted and actual in case of probit link:", cor(bac$Acquisition, bac.pred2))
+```
+Very similar performance can be noticed (like in case of AIC and BIC)
+
+##Hierarchical Generalized Linear Models (HGLM) with random effects 
+
+```{r}
+#Bayesian modeling fitting
+library(MCMCpack)
+bac.bp = MCMCprobit(Acquisition~Age+Income+HomeVal+LoanInd+Dist2Bank+MktShare, data=bac, mcmc=6000)
+summary(bac.bp)
+```
+
+```{r}
+bac.ba2 = MCMChlogit(fixed=Acquisition~Age+Income+HomeVal+LoanInd+Dist2Bank+MktShare, random=~Income, group="CustomerID", data=bac, mcmc=6000, r=2, R=diag(2))
+```
+```{r}
+summary(bac.ba2$mcmc[,1:7])
+```
+
+##Binary Data Regression Models for Bank Customer Attrition
+2505 customers, among whom 449 (about 18%) have closed their accounts within one year. I would like to know what
+demographic and behavioral variables contribute to higher attrition/churn rates among these customers. 
+
+```{r}
+bank.data = read.csv("Bank_Retention_Data.csv", header=T)
+bank$TractID = as.factor(bank.data$TractID)
+bank.logit1 = glm(Churn~Age+Income+HomeVal+Tenure+DirectDeposit+Loan+Dist+MktShare, data=bank.data,
+                  family=binomial(link="logit"))
+summary(bank.logit1)
+
+```
+
+```{r}
+head(bank.data)
+```
+
+```{r}
+bank.probit1 = glm(Churn~Age+Income+HomeVal+Tenure+DirectDeposit+Loan+Dist+MktShare, data=bank.data,
+                   family=binomial(link="probit"))
+summary(bank.probit1)
+```
+
+```{r}
+
+AIC(bank.logit1)
+BIC(bank.logit1)
+
+AIC(bank.probit1)
+BIC(bank.probit1)
+```
+There isn't a big difference in AIC and BIC. However if you observe precisely, we can infer that Probit fits a little
+better than Logit. 
+
+Next we will use a random effect grouped by TractID in the logistic regression
+# Random Effects Model - TractID
+```{r}
+library(lme4)
+library(scales)
+bank$Age<-rescale(bank$Age)
+bank$HomeVal<-rescale(bank$HomeVal)
+bank.glmer = glmer(Churn ~ Age+Income+HomeVal+Tenure+DirectDeposit+Loan+Dist+MktShare+ (1|TractID),
+                   data = bank, family=binomial(link="logit"), glmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+summary(bank.glmer)
+
+```
+
+Model Performance in case of Random Effects
+```{r}
+AIC(bank.glmer)
+BIC(bank.glmer)
+```
+
+Insights: 
+The significant betas are still the same even in the case of random effects models. Loan & MktShare came out
+to not significant like in the above models.
+The AIC and BIC increased in the random effects model as shown above. Thus, this model with random effects
+Doesn't fit well compared to the above logit and probit models.
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+## Bayesian Estimation in Heirarchical Modelling 
+```{r}
+library(MCMCpack)
+bank1 = read.csv("Bank_Retention_Data.csv", header=T)
+bank1_bayesian =MCMChlogit(fixed=Churn~Age+Income+HomeVal+Tenure+DirectDeposit+Loan+Dist+MktShare, random=~1,
+             group="TractID", data=bank1, mcmc=20000, burnin=10000,thin=20, r=2, R=1)
+summary(bank1_bayesian$mcmc[,1:9])
+```
+
+## Survival Model
+
+```{r}
+bankdata = read.csv(file = "Bank_Attrition_Data.csv", header=T)
+head(bankdata)
+
+```
+
+```{r}
+bankdata$TractID = as.factor(bankdata$TractID)
+dim(bankdata)
+bank.lst = list()
+remainCMR = rep(0, 12)
+churnCMR = rep(0, 12)
+for(m in 1:12) {
+  bank.lst[[m]] = bankdata[bankdata$Month==m,]
+  remainCMR[m] = dim(bank.lst[[m]])[1]
+  churnCMR[m] = sum(bank.lst[[m]]$Churn==1)
+}
+churnRate = churnCMR/remainCMR
+#bank.lst
+cat("MoM retained customers", remainCMR,"\n")
+cat("MoM churned customers", churnCMR)
+```
+
+
+```{r}
+
+bank.logit= glm(Churn~as.factor(Month)-1, data=bankdata,
+                family=binomial(link="logit"))
+bank.clog= glm(Churn~as.factor(Month)-1, data=bankdata,
+               family=binomial(link="cloglog"))
+```
+
+```{r}
+plot(bank.logit$coefficients,type='l')
+plot(bank.clog$coefficients,type='l')
+```
+
+```{r}
+##Below, we are adding month i.e. we are doing monotone 
+bankdata$Month2 = bankdata$Month^2
+bank.logit= glm(Churn~Month+Age+Income+HomeVal+Tenure+
+                  DirectDeposit+Loan+NumAccounts+Dist+MktShare , data=bankdata,
+                family=binomial(link="logit"))
+
+summary(bank.logit)
+```
+
+
+```{r}
+#For constant baseline 
+
+
+bank.logit1 = glm(Churn~Age+Income+HomeVal+Tenure+
+                    DirectDeposit+Loan+NumAccounts+Dist+MktShare , data=bankdata,
+                  family=binomial(link="logit"))
+bank.clog1 = glm(Churn~Age+Income+HomeVal+Tenure+
+                   DirectDeposit+Loan+NumAccounts+Dist+MktShare , data=bankdata,
+                 family=binomial(link="cloglog"))
+summary(bank.logit1)
+summary(bank.clog1)
+```
+
+```{r}
+#For monotone baseline 
+
+bank.logit2 = glm(Churn~Month+Age+Income+HomeVal+Tenure+
+                    DirectDeposit+Loan+NumAccounts+Dist+MktShare , data=bankdata,
+                  family=binomial(link="logit"))
+bank.clog2 = glm(Churn~Month+Age+Income+HomeVal+Tenure+
+                   DirectDeposit+Loan+NumAccounts+Dist+MktShare , data=bankdata,
+                 family=binomial(link="cloglog"))
+
+summary(bank.logit2)
+summary(bank.clog2)
+```
+
+
+```{r}
+# non-monotone baseline
+
+bank.logit3 = glm(Churn~poly(Month,2)+Age+Income+HomeVal+Tenure+
+                    DirectDeposit+Loan+NumAccounts+Dist+MktShare , data=bankdata,
+                  family=binomial(link="logit"))
+bank.clog3 = glm(Churn~poly(Month,2)+Age+Income+HomeVal+Tenure+
+                   DirectDeposit+Loan+NumAccounts+Dist+MktShare , data=bankdata,
+                 family=binomial(link="cloglog"))
+AIC(bank.logit1)
+AIC(bank.logit2)
+AIC(bank.logit3)
+BIC(bank.logit1)
+BIC(bank.clog2)
+BIC(bank.clog3)
+```
+
+```{r}
+## Discrete Hazard Model
+bank.logit= glm(Churn~as.factor(Month)+Age+Income+HomeVal+Tenure+
+                  DirectDeposit+Loan+NumAccounts+Dist+MktShare , data=bankdata,
+                family=binomial(link="logit"))
+bank.logit= glm(Churn~as.factor(Month)+Age+Income+HomeVal+Tenure+
+                  DirectDeposit+Loan+NumAccounts+Dist+MktShare , data=bankdata,
+                family=binomial(link="cloglog"))
+summary(bank.logit)
+
+AIC(bank.logit1)
+AIC(bank.logit2)
+AIC(bank.logit3)
+AIC(bank.logit)
+BIC(bank.logit1)
+BIC(bank.clog2)
+BIC(bank.clog3)
+BIC(bank.logit)
+```
+
+
+
+
